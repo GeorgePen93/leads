@@ -15,15 +15,25 @@ field_mapping = {
     "product_list": "products",
 }
 
-def clean_columns(record, mapping):
-    normalized = {}
+def clean_column_names(record: dict, mapping: dict) -> dict:
+    """
+    Function takes a lead and replaces keys
+    that are incorrect
+    """
+    clean = {}
     for key, value in record.items():
         new_key = mapping.get(key, key)
-        normalized[new_key] = value
-    return normalized
+        clean[new_key] = value
+    return clean
 
 
-def score_lead(lead):
+def score_lead(lead: dict) -> dict:
+    """
+    Function takes a single lead and searches
+    for 'corn-starch' or 'corn starch' in the
+    relevant fields. If it matches, increase
+    the score of this lead
+    """
     score = 0
     pattern = re.compile(r'\bcorn[-\s]?starch\b', re.IGNORECASE)
 
@@ -47,6 +57,41 @@ def score_lead(lead):
     return lead
 
 
+def merge_leads(leads: list) -> list:
+    """
+    Function takes a list of leads and de-duplicates them by company name
+    Merges so that we get the least amount of null values per company
+    """
+
+    merged = {}
+    
+    for item in leads:
+        company = item.get("company")
+
+        # if we have not seen it then add it to the new dictionary
+        if company not in merged:
+            merged[company] = item.copy()
+        # if we have already seen it, check whether this record has any values the original doesnt
+        else:
+            for field, value in item.items():
+                if merged[company].get(field) is None and value is not None:
+                    merged[company][field] = value
+    return list(merged.values())
+
+
+def write_results_to_csv(results: list, output_path: str):
+    """
+    Takes a list of leads and an output path,
+    writes to a csv and saves file
+    """
+    with open(output_path, 'w', newline='') as csv_file:
+        fieldnames = results[0].keys()
+        writer = DictWriter(csv_file, fieldnames=fieldnames)
+        writer.writeheader()
+        for record in results:
+            writer.writerow(record)
+
+# Read the file
 with open('processed_buyer_leads.json', 'r') as leads_file:
     leads_file = leads_file.read()
 
@@ -56,28 +101,12 @@ try:
 except Exception as e:
     print("Unable to decode file")
 
-merged = {}
+# Align column names + de-duplicate
+merged = merge_leads([clean_column_names(item, field_mapping) for item in decoded_object])
 
-for item in decoded_object:
-    item = clean_columns(item, field_mapping)
-    company = item.get("company")
+# Score the items
+results = [score_lead(item) for item in merged]
 
-    # if we have not seen it then add it to the new dictionary
-    if company not in merged:
-        merged[company] = item.copy()
-    # if we have already seen it, check whether this record has any values the original doesnt
-    else:
-        for field, value in item.items():
-            if merged[company].get(field) is None and value is not None:
-                merged[company][field] = value
-
-results = [score_lead(item) for item in list(merged.values())]
-
-with open('results.csv', 'w', newline='') as csv_file:
-    fieldnames = results[0].keys()
-    writer = DictWriter(csv_file, fieldnames=fieldnames)
-
-    writer.writeheader()
-    for record in results:
-        writer.writerow(record)
+# Save to csv
+write_results_to_csv(results, 'results.csv')
 
